@@ -2,11 +2,12 @@ FROM node:20-slim
 
 WORKDIR /app
 
+ENV DISABLE_ADMIN=true
+
 COPY package.json package-lock.json ./
 RUN npm ci --maxsockets 5
 
 COPY . .
-RUN npx medusa build
 
 EXPOSE 9000
 
