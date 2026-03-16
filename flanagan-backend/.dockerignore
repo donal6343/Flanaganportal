@@ -1,0 +1,10 @@
+node_modules
+.next
+.cache
+.medusa
+dist
+build
+.git
+.env
+.env.local
+.DS_Store
