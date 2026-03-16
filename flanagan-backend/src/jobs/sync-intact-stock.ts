@@ -23,7 +23,9 @@ export default async function syncIntactStock(container: MedusaContainer) {
     })
 
     const skuToInventoryMap = new Map(
-      inventoryItems.map((item: { id: string; sku: string }) => [item.sku, item.id])
+      inventoryItems
+        .filter((item) => item.sku != null)
+        .map((item) => [item.sku as string, item.id])
     )
 
     let updated = 0
@@ -38,7 +40,8 @@ export default async function syncIntactStock(container: MedusaContainer) {
       if (levels.length > 0) {
         await inventoryService.updateInventoryLevels([
           {
-            id: levels[0].id,
+            inventory_item_id: inventoryItemId,
+            location_id: levels[0].location_id,
             stocked_quantity: stockLevel.quantity_available,
           },
         ])

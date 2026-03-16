@@ -19,7 +19,9 @@ export default async function syncIntactPrices(container: MedusaContainer) {
     })
 
     const skuToVariantMap = new Map(
-      productVariants.map((v: { id: string; sku: string }) => [v.sku, v.id])
+      productVariants
+        .filter((v) => v.sku != null)
+        .map((v) => [v.sku as string, v.id])
     )
 
     let updated = 0

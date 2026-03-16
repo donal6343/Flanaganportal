@@ -37,14 +37,14 @@ export default async function orderPlacedHandler({
       return
     }
 
-    const lines: IntactOrderLine[] = (order.items || []).map(
-      (item: Record<string, unknown>) => ({
-        product_code: (item.variant as Record<string, unknown>)?.sku || "",
-        quantity: item.quantity as number,
-        unit_price: (item.unit_price as number) / 100,
-        description: item.title as string,
-      })
-    )
+    const lines: IntactOrderLine[] = (order.items || [])
+      .filter((item): item is NonNullable<typeof item> => item != null)
+      .map((item) => ({
+        product_code: String((item as any).variant?.sku || ""),
+        quantity: Number(item.quantity) || 0,
+        unit_price: (Number(item.unit_price) || 0) / 100,
+        description: String(item.title || ""),
+      }))
 
     const shippingAddress = order.shipping_address as Record<string, string> | null
 
