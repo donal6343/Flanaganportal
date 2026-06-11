@@ -385,15 +385,22 @@ export default async function seedFlanaganData({ container }: ExecArgs) {
   const missingCategories = categoryNames.filter(
     (name) => !existingCategories.some((c) => c.name === name)
   );
-  if (missingCategories.length) {
-    await createProductCategoriesWorkflow(container).run({
-      input: {
-        product_categories: missingCategories.map((name) => ({
-          name,
-          is_active: true,
-        })),
-      },
-    });
+  for (const name of missingCategories) {
+    try {
+      await createProductCategoriesWorkflow(container).run({
+        input: {
+          product_categories: [{ name, is_active: true }],
+        },
+      });
+    } catch (e) {
+      // A soft-deleted category keeps its unique handle but is invisible
+      // to listProductCategories, so creation can still conflict.
+      if (e instanceof Error && e.message.includes("already exists")) {
+        logger.warn(`Skipping category "${name}": ${e.message}`);
+      } else {
+        throw e;
+      }
+    }
   }
   logger.info("Finished seeding product categories.");
 
