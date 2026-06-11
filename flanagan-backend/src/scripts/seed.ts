@@ -107,55 +107,92 @@ export default async function seedFlanaganData({ container }: ExecArgs) {
   logger.info("Finished seeding store data.");
 
   logger.info("Seeding region data...");
-  const { result: regionResult } = await createRegionsWorkflow(container).run({
-    input: {
-      regions: [
-        {
-          name: "United Kingdom",
-          currency_code: "gbp",
-          countries: ["gb"],
-          payment_providers: ["pp_system_default"],
-        },
-        {
-          name: "Ireland",
-          currency_code: "eur",
-          countries: ["ie"],
-          payment_providers: ["pp_system_default"],
-        },
-      ],
-    },
-  });
-  const ukRegion = regionResult[0];
-  const ieRegion = regionResult[1];
+  const regionModuleService = container.resolve(Modules.REGION);
+  const existingRegions = await regionModuleService.listRegions();
+  let ukRegion = existingRegions.find((r) => r.currency_code === "gbp");
+  let ieRegion = existingRegions.find((r) => r.currency_code === "eur");
+
+  if (!ukRegion || !ieRegion) {
+    const { result: regionResult } = await createRegionsWorkflow(container).run({
+      input: {
+        regions: [
+          ...(!ukRegion
+            ? [
+                {
+                  name: "United Kingdom",
+                  currency_code: "gbp",
+                  countries: ["gb"],
+                  payment_providers: ["pp_system_default"],
+                },
+              ]
+            : []),
+          ...(!ieRegion
+            ? [
+                {
+                  name: "Ireland",
+                  currency_code: "eur",
+                  countries: ["ie"],
+                  payment_providers: ["pp_system_default"],
+                },
+              ]
+            : []),
+        ],
+      },
+    });
+    ukRegion = ukRegion ?? regionResult.find((r) => r.currency_code === "gbp");
+    ieRegion = ieRegion ?? regionResult.find((r) => r.currency_code === "eur");
+  }
+
+  if (!ukRegion || !ieRegion) {
+    throw new Error("Failed to resolve UK/Ireland regions");
+  }
   logger.info("Finished seeding regions.");
 
   logger.info("Seeding tax regions...");
-  await createTaxRegionsWorkflow(container).run({
-    input: countries.map((country_code) => ({
-      country_code,
-      provider_id: "tp_system",
-    })),
+  const taxModuleService = container.resolve(Modules.TAX);
+  const existingTaxRegions = await taxModuleService.listTaxRegions({
+    country_code: countries,
   });
+  const missingTaxCountries = countries.filter(
+    (code) => !existingTaxRegions.some((t) => t.country_code === code)
+  );
+  if (missingTaxCountries.length) {
+    await createTaxRegionsWorkflow(container).run({
+      input: missingTaxCountries.map((country_code) => ({
+        country_code,
+        provider_id: "tp_system",
+      })),
+    });
+  }
   logger.info("Finished seeding tax regions.");
 
   logger.info("Seeding stock location data...");
-  const { result: stockLocationResult } = await createStockLocationsWorkflow(
-    container
-  ).run({
-    input: {
-      locations: [
-        {
-          name: "Flanagan Flooring Warehouse",
-          address: {
-            city: "Belfast",
-            country_code: "GB",
-            address_1: "",
+  const stockLocationModuleService = container.resolve(Modules.STOCK_LOCATION);
+  const existingLocations = await stockLocationModuleService.listStockLocations(
+    {
+      name: "Flanagan Flooring Warehouse",
+    }
+  );
+  let stockLocation = existingLocations[0];
+  if (!stockLocation) {
+    const { result: stockLocationResult } = await createStockLocationsWorkflow(
+      container
+    ).run({
+      input: {
+        locations: [
+          {
+            name: "Flanagan Flooring Warehouse",
+            address: {
+              city: "Belfast",
+              country_code: "GB",
+              address_1: "",
+            },
           },
-        },
-      ],
-    },
-  });
-  const stockLocation = stockLocationResult[0];
+        ],
+      },
+    });
+    stockLocation = stockLocationResult[0];
+  }
 
   await updateStoresWorkflow(container).run({
     input: {
@@ -196,19 +233,27 @@ export default async function seedFlanaganData({ container }: ExecArgs) {
     shippingProfile = shippingProfileResult[0];
   }
 
-  const fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
-    name: "UK & Ireland Delivery",
-    type: "shipping",
-    service_zones: [
-      {
-        name: "UK & Ireland",
-        geo_zones: [
-          { country_code: "gb", type: "country" },
-          { country_code: "ie", type: "country" },
-        ],
-      },
-    ],
-  });
+  const existingFulfillmentSets =
+    await fulfillmentModuleService.listFulfillmentSets(
+      { name: "UK & Ireland Delivery" },
+      { relations: ["service_zones"] }
+    );
+  let fulfillmentSet = existingFulfillmentSets[0];
+  if (!fulfillmentSet) {
+    fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
+      name: "UK & Ireland Delivery",
+      type: "shipping",
+      service_zones: [
+        {
+          name: "UK & Ireland",
+          geo_zones: [
+            { country_code: "gb", type: "country" },
+            { country_code: "ie", type: "country" },
+          ],
+        },
+      ],
+    });
+  }
 
   await link.create({
     [Modules.STOCK_LOCATION]: {
@@ -219,54 +264,60 @@ export default async function seedFlanaganData({ container }: ExecArgs) {
     },
   });
 
-  await createShippingOptionsWorkflow(container).run({
-    input: [
-      {
-        name: "Standard Delivery",
-        price_type: "flat",
-        provider_id: "manual_manual",
-        service_zone_id: fulfillmentSet.service_zones[0].id,
-        shipping_profile_id: shippingProfile.id,
-        type: {
-          label: "Standard",
-          description: "Delivery in 3-5 working days.",
-          code: "standard",
+  const existingShippingOptions =
+    await fulfillmentModuleService.listShippingOptions({
+      name: ["Standard Delivery", "Express Delivery"],
+    });
+  if (!existingShippingOptions.length) {
+    await createShippingOptionsWorkflow(container).run({
+      input: [
+        {
+          name: "Standard Delivery",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: {
+            label: "Standard",
+            description: "Delivery in 3-5 working days.",
+            code: "standard",
+          },
+          prices: [
+            { currency_code: "gbp", amount: 0 },
+            { currency_code: "eur", amount: 0 },
+            { region_id: ukRegion.id, amount: 0 },
+            { region_id: ieRegion.id, amount: 0 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
         },
-        prices: [
-          { currency_code: "gbp", amount: 0 },
-          { currency_code: "eur", amount: 0 },
-          { region_id: ukRegion.id, amount: 0 },
-          { region_id: ieRegion.id, amount: 0 },
-        ],
-        rules: [
-          { attribute: "enabled_in_store", value: "true", operator: "eq" },
-          { attribute: "is_return", value: "false", operator: "eq" },
-        ],
-      },
-      {
-        name: "Express Delivery",
-        price_type: "flat",
-        provider_id: "manual_manual",
-        service_zone_id: fulfillmentSet.service_zones[0].id,
-        shipping_profile_id: shippingProfile.id,
-        type: {
-          label: "Express",
-          description: "Next working day delivery.",
-          code: "express",
+        {
+          name: "Express Delivery",
+          price_type: "flat",
+          provider_id: "manual_manual",
+          service_zone_id: fulfillmentSet.service_zones[0].id,
+          shipping_profile_id: shippingProfile.id,
+          type: {
+            label: "Express",
+            description: "Next working day delivery.",
+            code: "express",
+          },
+          prices: [
+            { currency_code: "gbp", amount: 25 },
+            { currency_code: "eur", amount: 30 },
+            { region_id: ukRegion.id, amount: 25 },
+            { region_id: ieRegion.id, amount: 30 },
+          ],
+          rules: [
+            { attribute: "enabled_in_store", value: "true", operator: "eq" },
+            { attribute: "is_return", value: "false", operator: "eq" },
+          ],
         },
-        prices: [
-          { currency_code: "gbp", amount: 25 },
-          { currency_code: "eur", amount: 30 },
-          { region_id: ukRegion.id, amount: 25 },
-          { region_id: ieRegion.id, amount: 30 },
-        ],
-        rules: [
-          { attribute: "enabled_in_store", value: "true", operator: "eq" },
-          { attribute: "is_return", value: "false", operator: "eq" },
-        ],
-      },
-    ],
-  });
+      ],
+    });
+  }
   logger.info("Finished seeding fulfillment data.");
 
   await linkSalesChannelsToStockLocationWorkflow(container).run({
@@ -315,22 +366,35 @@ export default async function seedFlanaganData({ container }: ExecArgs) {
   logger.info("Finished seeding publishable API key data.");
 
   logger.info("Seeding product categories...");
-  await createProductCategoriesWorkflow(container).run({
-    input: {
-      product_categories: [
-        { name: "Laminate", is_active: true },
-        { name: "Carpet", is_active: true },
-        { name: "Vinyl", is_active: true },
-        { name: "LVT", is_active: true },
-        { name: "Real Wood", is_active: true },
-        { name: "Artificial Grass", is_active: true },
-        { name: "Underlay & Accessories", is_active: true },
-        { name: "Carpet Tiles", is_active: true },
-        { name: "Safety Flooring", is_active: true },
-        { name: "Clearance", is_active: true },
-      ],
-    },
+  const categoryNames = [
+    "Laminate",
+    "Carpet",
+    "Vinyl",
+    "LVT",
+    "Real Wood",
+    "Artificial Grass",
+    "Underlay & Accessories",
+    "Carpet Tiles",
+    "Safety Flooring",
+    "Clearance",
+  ];
+  const productModuleService = container.resolve(Modules.PRODUCT);
+  const existingCategories = await productModuleService.listProductCategories({
+    name: categoryNames,
   });
+  const missingCategories = categoryNames.filter(
+    (name) => !existingCategories.some((c) => c.name === name)
+  );
+  if (missingCategories.length) {
+    await createProductCategoriesWorkflow(container).run({
+      input: {
+        product_categories: missingCategories.map((name) => ({
+          name,
+          is_active: true,
+        })),
+      },
+    });
+  }
   logger.info("Finished seeding product categories.");
 
   logger.info("Flanagan Flooring seed data complete.");
