@@ -9,6 +9,14 @@ const S3_HOSTNAME = process.env.MEDUSA_CLOUD_S3_HOSTNAME
 const S3_PATHNAME = process.env.MEDUSA_CLOUD_S3_PATHNAME
 
 /**
+ * Allow product images served by the Medusa backend itself
+ * (e.g. uploads stored by the local file provider under /static).
+ */
+const MEDUSA_BACKEND_HOSTNAME = process.env.MEDUSA_BACKEND_URL
+  ? new URL(process.env.MEDUSA_BACKEND_URL).hostname
+  : null
+
+/**
  * @type {import('next').NextConfig}
  */
 const nextConfig = {
@@ -42,6 +50,14 @@ const nextConfig = {
         protocol: "https",
         hostname: "medusa-server-testing.s3.us-east-1.amazonaws.com",
       },
+      ...(MEDUSA_BACKEND_HOSTNAME
+        ? [
+            {
+              protocol: "https",
+              hostname: MEDUSA_BACKEND_HOSTNAME,
+            },
+          ]
+        : []),
       ...(S3_HOSTNAME && S3_PATHNAME
         ? [
             {
