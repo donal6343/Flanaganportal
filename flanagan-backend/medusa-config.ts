@@ -21,6 +21,22 @@ module.exports = defineConfig({
   },
   modules: [
     {
+      resolve: "@medusajs/medusa/file",
+      options: {
+        providers: [
+          {
+            resolve: "@medusajs/medusa/file-local",
+            id: "local",
+            options: {
+              // Without this the provider generates http://localhost:9000/static
+              // URLs for every upload, which break outside the container.
+              backend_url: `${process.env.MEDUSA_BACKEND_URL || "http://localhost:9000"}/static`,
+            },
+          },
+        ],
+      },
+    },
+    {
       resolve: "./src/modules/intact",
       options: {
         apiUrl: process.env.INTACT_API_URL || "https://api.intactsoftware.com",
